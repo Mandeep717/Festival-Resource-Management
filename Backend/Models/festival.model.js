@@ -5,6 +5,11 @@ const festivalSchema = new Schema({
         type: String,
         required: true,
     },
+    slug: {
+        type: String,
+        required: true,
+        unique: true,
+    },
     description: {
         type: String,
         required: true,
@@ -21,6 +26,12 @@ const festivalSchema = new Schema({
     endDate: {
         type: Date,
         required: true,
+        validate: {
+            validator: function (v) {
+                return v >= this.startDate;
+            },
+            message: 'End date must be after start date',
+        },
     },
     location: {
         type: String,
@@ -34,6 +45,12 @@ const festivalSchema = new Schema({
     registrationDeadline: {
         type: Date,
         required: true,
+        validate: {
+            validator: function (v) {
+                return v < this.startDate;
+            },
+            message: 'Registration deadline must be before start date',
+        },
     },
     registrationFee: {
         type: Number,
@@ -43,16 +60,17 @@ const festivalSchema = new Schema({
     registrationStartDate: {
         type: Date,
         required: true,
+        validate: {
+            validator: function (v) {
+                return v < this.registrationDeadline;
+            },
+            message: 'Registration start date must be before registration deadline',
+        },
     },
     publishedScheduleId: {
         type: Types.ObjectId,
-        ref: 'Schedule',
+        ref: 'ScheduleVersion',
         default: null,
-    },
-    volunteers: {
-        type: [Types.ObjectId],
-        ref: 'User',
-        default: [],
     }
 },{
     timestamps: true,
