@@ -31,4 +31,9 @@ const registrationSchema = new Schema({
     strict: "throw"
 })
 
+registrationSchema.index(
+    { sessionId: 1, userId: 1 },
+    { unique: true }
+);
+
 export const RegistrationModel = model('Registration', registrationSchema);

@@ -1,5 +1,22 @@
 import { Schema, model, Types } from 'mongoose'
 
+const resourcesAllocatedSchema = new Schema({
+    resourceId: {
+        type: Types.ObjectId,
+        ref: 'Resource',
+        required: true,
+    },
+    quantity: {
+        type: Number,
+        required: true,
+        min: 1,
+    },
+},{
+    timestamps: true,
+    versionKey: false,
+    strict: "throw"
+})
+
 const scheduleSnapshotSchema = new Schema({
     sessionId: {
         type: Types.ObjectId,
@@ -12,15 +29,33 @@ const scheduleSnapshotSchema = new Schema({
         required: true,
     },
     resourcesAllocated: {
-        type: [Types.ObjectId],
-        ref: 'Resource',
+        type: [resourcesAllocatedSchema],
         default: [],
     },
     capacity: {
         type: Number,
         required: true,
         min: 0,
-    }
+    },
+    startTime: {
+        type: Date,
+        required: true,
+    },
+    endTime: {
+        type: Date,
+        required: true,
+        validate: {
+            validator: function (v) {
+                return v >= this.startTime;
+            },
+            message: 'End time must be after start time',
+        },
+    },
+    volunteersAssigned: {
+        type: [Types.ObjectId],
+        ref: 'User',
+        default: [],
+    },
 },{
     timestamps: true,
     versionKey: false,
@@ -52,8 +87,7 @@ const conflictDetailsSchema = new Schema({
         default: [],
     },
     resourcesAllocated: {
-        type: [Types.ObjectId],
-        ref: 'Resource',
+        type: [resourcesAllocatedSchema],
         default: [],
     },
 },{

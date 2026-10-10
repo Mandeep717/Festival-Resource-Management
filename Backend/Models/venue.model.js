@@ -39,4 +39,9 @@ const venueSchema = new Schema({
     strict: "throw"
 })
 
+venueSchema.index(
+    { festivalId: 1, venueCode: 1 },
+    { unique: true }
+);
+
 export const VenueModel = model('Venue', venueSchema);
