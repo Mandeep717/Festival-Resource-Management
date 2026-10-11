@@ -1,5 +1,6 @@
 import exp from 'express'
 import {connect} from 'mongoose'
+import cookieParser from "cookie-parser";
 import dotenv from 'dotenv'
 
 const app = exp()
@@ -7,6 +8,7 @@ dotenv.config()
 const PORT = process.env.PORT || 3000
 //Body-Parser Middleware
 app.use(exp.json())
+app.use(cookieParser())
 
 function connectToDb(){
     try{
