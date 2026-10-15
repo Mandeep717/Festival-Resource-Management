@@ -3,9 +3,11 @@ import { hash, compare } from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Types } from "mongoose";
 import crypto from "crypto";
-
+import { verifyToken } from "../Middlewares/verify-token.middleware.js";
 import { UserModel } from "../Models/user.model.js";
 import { EmailTokenModel } from "../Models/email-token.model.js";
+import { ShiftModel } from "../Models/shift.model.js";
+import { FestivalModel } from "../Models/festival.model.js";
 
 const volunteerRouter = exp.Router()
 
@@ -14,7 +16,7 @@ volunteerRouter.post('/register', async(req, res)=>{
     let volunteerData = req.body
     const hashedPassword = await hash(volunteerData.password, 12);
     volunteerData.password = hashedPassword;
-    let newVolunteer = new UserModel.create(volunteerData)
+    let newVolunteer = await UserModel.create(volunteerData)
     res.status(201).json({message: "Volunteer registered successfully", volunteer: newVolunteer})
 })
 
@@ -48,8 +50,8 @@ volunteerRouter.post('/logout', verifyToken, (req, res)=>{
 })
 
 //Get profile of logged-in volunteer
-volunteerRouter.get('/profile:id', verifyToken, async(req, res)=>{
-    let volunteerId = req.params.id
+volunteerRouter.get('/me', verifyToken, async(req, res)=>{
+    let volunteerId = req.user.userId
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
@@ -61,8 +63,11 @@ volunteerRouter.get('/profile:id', verifyToken, async(req, res)=>{
 })
 
 //Change password of logged-in volunteer
-volunteerRouter.put('/change-password:id', verifyToken, async(req, res)=>{
-    let volunteerId = req.params.id
+volunteerRouter.put('/change-password', verifyToken, async(req, res)=>{
+    let volunteerId = req.user.userId
+    if(!volunteerId){
+        return res.status(400).json({message: "Volunteer ID is required"})
+    }
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
@@ -106,5 +111,51 @@ volunteerRouter.post("/forgot-password", async (req, res, next) => {
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     })
     return res.status(200).json(response);
+})
+
+//List of festivals accessible to volunteers
+volunteerRouter.get("/festivals", verifyToken, async(req, res)=>{
+    // let volunteerId = req.user.userId
+    // if(!Types.ObjectId.isValid(volunteerId)){
+    //     return res.status(400).json({message: "Invalid volunteer ID"})
+    // }
+    let festivals = await FestivalModel.find()
+    res.status(200).json({success: true, festivals: festivals, message: "Festivals retrieved successfully"})
+})
+
+//Assignments of the volunteer
+volunteerRouter.get("/assignments", verifyToken, async(req, res)=>{
+    let volunteerId = req.user.userId
+    if(!Types.ObjectId.isValid(volunteerId)){
+        return res.status(400).json({message: "Invalid volunteer ID"})
+    }
+    let assignments = await ShiftModel.find({userId: volunteerId}).populate("festivalId", "-__v")
+    res.status(200).json({success: true, assignments: assignments, message: "Assignments retrieved successfully"})
+})
+
+//Update assignment status
+volunteerRouter.put("/assignments/:shiftId/status", verifyToken, async(req, res)=>{
+    let volunteerId = req.user.userId
+    if(!Types.ObjectId.isValid(volunteerId)){
+        return res.status(400).json({message: "Invalid volunteer ID"})
+    }
+    let shiftId = req.params.shiftId
+    if(!Types.ObjectId.isValid(shiftId)){
+        return res.status(400).json({message: "Invalid shift ID"})
+    }
+    let shift = await ShiftModel.findById(shiftId)
+    if(!shift){
+        return res.status(404).json({message: "Shift not found"})
+    }
+    if(shift.userId.toString() !== volunteerId){
+        return res.status(403).json({message: "You are not authorized to update this shift"})
+    }
+    let { status } = req.body
+    if(!status || !["scheduled", "ongoing", "completed", "cancelled"].includes(status)){
+        return res.status(400).json({message: "Invalid status"})
+    }
+    shift.status = status
+    await shift.save()
+    res.status(200).json({success: true, message: "Shift status updated successfully"})
 })
 

@@ -3,9 +3,11 @@ import { hash, compare } from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { Types } from "mongoose";
 import crypto from "crypto";
-
+import { verifyToken } from "../Middlewares/verify-token.middleware.js";
 import { UserModel } from "../Models/user.model.js";
 import { EmailTokenModel } from "../Models/email-token.model.js";
+import { allowedRoles } from "../Middlewares/allowed-roles.middleware.js";
+import {FestivalModel} from "../Models/festival.model.js";
 
 const organizerRouter = exp.Router()
 
@@ -14,7 +16,7 @@ organizerRouter.post('/register', async(req, res)=>{
     let organizerData = req.body
     const hashedPassword = await hash(organizerData.password, 12);
     organizerData.password = hashedPassword;
-    let newOrganizer = new UserModel.create(organizerData)
+    let newOrganizer = await UserModel.create(organizerData)
     res.status(201).json({message: "Organizer registered successfully", organizer: newOrganizer})
 })
 
@@ -48,8 +50,8 @@ organizerRouter.post('/logout', verifyToken, (req, res)=>{
 })
 
 //Get profile of logged-in organizer
-organizerRouter.get('/profile:id', verifyToken, async(req, res)=>{
-    let organizerId = req.params.id
+organizerRouter.get('/me', verifyToken, async(req, res)=>{
+    let organizerId = req.user.userId
     if(!Types.ObjectId.isValid(organizerId)){
         return res.status(400).json({message: "Invalid organizer ID"})
     }
@@ -61,8 +63,8 @@ organizerRouter.get('/profile:id', verifyToken, async(req, res)=>{
 })
 
 //Change password for logged-in organizer
-organizerRouter.put('/change-password:id', verifyToken, async(req, res)=>{
-    let organizerId = req.params.id
+organizerRouter.put('/change-password', verifyToken, async(req, res)=>{
+    let organizerId = req.user.userId
     if(!Types.ObjectId.isValid(organizerId)){
         return res.status(400).json({message: "Invalid organizer ID"})
     }
@@ -106,4 +108,92 @@ organizerRouter.post("/forgot-password", async (req, res, next) => {
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
     })
     return res.status(200).json(response);
+})
+
+//Create a new festival
+organizerRouter.post('/festivals', verifyToken, allowedRoles(["organizer"]), async(req, res)=>{
+    let organizerId = req.user.userId
+    if(!Types.ObjectId.isValid(organizerId)){
+        return res.status(400).json({message: "Invalid organizer ID"})
+    }
+    let organizer = await UserModel.findById(organizerId)
+    if(!organizer){
+        return res.status(404).json({message: "Organizer not found"})
+    }
+    let festivalData = req.body
+    festivalData.organizer = organizerId
+    let newFestival = await FestivalModel.create(festivalData)
+    res.status(201).json({message: "Festival created successfully", festival: newFestival})
+})
+
+//Get all festivals
+organizerRouter.get("/festivals", verifyToken, allowedRoles(["organizer"]), async(req, res)=>{
+    let festivalsInDb = await FestivalModel.find({organizer: req.user.userId})
+    res.status(200).json({success: true, festivals: festivalsInDb})
+})
+
+//Get specific festival by festivalId
+organizerRouter.get("/festival/:festivalId", verifyToken, allowedRoles(["organizer"]), async(req, res)=>{
+    let festivalId = req.params.festivalId
+    if(!Types.ObjectId.isValid(festivalId)){
+        return res.status(400).json({message: "Invalid festival ID"})
+    }
+    let festival = await FestivalModel.findById(festivalId)
+    if(!festival){
+        return res.status(404).json({message: "Festival not found"})
+    }
+    res.status(200).json({success: true, festival: festival})
+})
+
+//Update festival by festivalId
+organizerRouter.put("/festival/:festivalId", verifyToken, allowedRoles(["organizer"]), async (req, res)=>{
+    let festivalId = req.params.festivalId
+    if(!Types.ObjectId.isValid(festivalId)){
+        return res.status(400).json({message: "Invalid festival ID"})
+    }
+    let updatedContent = req.body
+    let updatedFestival = await FestivalModel.findByIdAndUpdate(festivalId, updatedContent, {new: true, runValidators: true})
+    if(!updatedFestival){
+        return res.status(404).json({message: "Festival not found"})
+    }
+    res.status(200).json({success: true, festival: updatedFestival})
+})
+
+//Delete festival by ID
+organizerRouter.delete("/festival/:festivalId", verifyToken, allowedRoles(["organizer"]), async (req, res)=>{
+    let festivalId = req.params.festivalId
+    if(!Types.ObjectId.isValid(festivalId)){
+        return res.status(400).json({message: "Invalid festival ID"})
+    }
+    let deletedFestival = await FestivalModel.findByIdAndDelete(festivalId)
+    if(!deletedFestival){
+        return res.status(404).json({message: "Festival not found"})
+    }
+    res.status(200).json({success: true, message: "Festival deleted successfully"})
+})
+
+//List registered attendees for a specific festival
+organizerRouter.get("/festival/:festivalId/attendees", verifyToken, allowedRoles(["organizer"]), async (req, res)=>{
+    let festivalId = req.params.festivalId
+    if(!Types.ObjectId.isValid(festivalId)){
+        return res.status(400).json({message: "Invalid festival ID"})
+    }
+    let festival = await FestivalModel.findById(festivalId).populate("attendees", "-name -email")
+    if(!festival){
+        return res.status(404).json({message: "Festival not found"})
+    }
+    res.status(200).json({success: true, attendees: festival.attendees})
+})
+
+//List volunteers for specific festival
+organizerRouter.get("/festival/:festivalId/volunteers", verifyToken, allowedRoles(["organizer"]), async (req, res)=>{
+    let festivalId = req.params.festivalId
+    if(!Types.ObjectId.isValid(festivalId)){
+        return res.status(400).json({message: "Invalid festival ID"})
+    }
+    let festival = await FestivalModel.findById(festivalId).populate("volunteers", "-name -email")
+    if(!festival){
+        return res.status(404).json({message: "Festival not found"})
+    }
+    res.status(200).json({success: true, volunteers: festival.volunteers})
 })
