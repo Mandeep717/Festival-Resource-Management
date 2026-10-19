@@ -8,26 +8,31 @@ import { UserModel } from "../Models/user.model.js";
 import { EmailTokenModel } from "../Models/email-token.model.js";
 import { ShiftModel } from "../Models/shift.model.js";
 import { FestivalModel } from "../Models/festival.model.js";
+import { ScheduleVersionModel } from "../Models/schedule-version.model.js";
+import { FestivalSessionModel } from "../Models/festival-sessions.model.js";
+import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
 
-const volunteerRouter = exp.Router()
+export const volunteerRouter = exp.Router()
 
 //Register a new volunteer
 volunteerRouter.post('/register', async(req, res)=>{
-    let volunteerData = req.body
-    const hashedPassword = await hash(volunteerData.password, 12);
-    volunteerData.password = hashedPassword;
-    let newVolunteer = await UserModel.create(volunteerData)
-    res.status(201).json({message: "Volunteer registered successfully", volunteer: newVolunteer})
+    const { email, password, name } = req.body || {}
+    if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) return res.status(400).json({message: "Email, password, and name are required"})
+    const hashedPassword = await hash(password, 12);
+    let newVolunteer = await UserModel.create({email, name, password: hashedPassword, accountType: "volunteer"})
+    const volunteer = newVolunteer.toObject()
+    delete volunteer.password
+    res.status(201).json({message: "Volunteer account created; festival access requires an active volunteer membership", volunteer})
 })
 
 //Login a volunteer
 volunteerRouter.post('/login', async(req, res)=>{
-    let volunteerCred = req.body
-    if(!volunteerCred.email || !volunteerCred.password) {
+    let volunteerCred = req.body || {}
+    if(typeof volunteerCred.email !== "string" || typeof volunteerCred.password !== "string" || !volunteerCred.email.trim() || !volunteerCred.password) {
         return res.status(400).json({message: "Email and password are required"})
     }
-    const user = await UserModel.findOne({ email: volunteerCred.email });
-    if (!user) {
+    const user = await UserModel.findOne({ email: volunteerCred.email.trim().toLowerCase() });
+    if (!user || user.status !== "active") {
         return res.status(401).json({message: "Invalid credentials"})
     }
     const isMatch = await compare(volunteerCred.password, user.password);
@@ -71,7 +76,7 @@ volunteerRouter.put('/change-password', verifyToken, async(req, res)=>{
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
-    let { oldPassword, newPassword } = req.body
+    let { oldPassword, newPassword } = req.body || {}
     let volunteer = await UserModel.findById(volunteerId)
     if(!volunteer){
         return res.status(404).json({message: "Volunteer not found"})
@@ -87,39 +92,44 @@ volunteerRouter.put('/change-password', verifyToken, async(req, res)=>{
 })
 
 // Forgot password
-volunteerRouter.post("/forgot-password", async (req, res, next) => {
-    let { email } = req.body;
-    if (!email) {
+volunteerRouter.post("/forgot-password", async (req, res) => {
+    const { email } = req.body || {};
+    if (typeof email !== "string" || !email.trim()) {
         return res.status(400).json({ message: "Email is required" });
     }
-    let response = {
+    const user = await UserModel.findOne({
+        email: email.trim().toLowerCase(),
+        accountType: "volunteer",
+    }).select("_id");
+    if (user) {
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+        await EmailTokenModel.deleteMany({userId: user._id, tokenType: "PASSWORD_RESET", consumedAt: null});
+        await EmailTokenModel.create({
+            userId: user._id,
+            tokenHash,
+            tokenType: "PASSWORD_RESET",
+            expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        });
+    }
+    return res.status(200).json({
         success: true,
         message: "If the email exists, a password reset link will be sent",
-    }
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const hashedToken = crypto.createHash("sha256").update(resetToken).digest("hex");
-    await EmailTokenModel.deleteMany({
-        userId: user._id,
-        purpose: "password-reset",
     });
-
-    // Store the hashed token with an expiration time.
-    await EmailTokenModel.create({
-        userId: user._id,
-        tokenHash: hashedToken,
-        purpose: "password-reset",
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-    })
-    return res.status(200).json(response);
-})
+});
 
 //List of festivals accessible to volunteers
 volunteerRouter.get("/festivals", verifyToken, async(req, res)=>{
-    // let volunteerId = req.user.userId
-    // if(!Types.ObjectId.isValid(volunteerId)){
-    //     return res.status(400).json({message: "Invalid volunteer ID"})
-    // }
-    let festivals = await FestivalModel.find()
+    const volunteerId = req.user.userId
+    if (!Types.ObjectId.isValid(volunteerId)) {
+        return res.status(400).json({message: "Invalid volunteer ID"})
+    }
+    const festivalIds = await FestivalMembershipModel.distinct("festivalId", {
+        userId: volunteerId,
+        membershipType: "volunteer",
+        status: "active"
+    })
+    let festivals = await FestivalModel.find({_id: {$in: festivalIds}})
     res.status(200).json({success: true, festivals: festivals, message: "Festivals retrieved successfully"})
 })
 
@@ -129,7 +139,7 @@ volunteerRouter.get("/assignments", verifyToken, async(req, res)=>{
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
-    let assignments = await ShiftModel.find({userId: volunteerId}).populate("festivalId", "-__v")
+    let assignments = await ShiftModel.find({volunteers: volunteerId}).populate("festivalId", "-__v")
     res.status(200).json({success: true, assignments: assignments, message: "Assignments retrieved successfully"})
 })
 
@@ -139,18 +149,15 @@ volunteerRouter.put("/assignments/:shiftId/status", verifyToken, async(req, res)
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
-    let shiftId = req.params.shiftId
+    let {shiftId} = req.params
     if(!Types.ObjectId.isValid(shiftId)){
         return res.status(400).json({message: "Invalid shift ID"})
     }
-    let shift = await ShiftModel.findById(shiftId)
+    let shift = await ShiftModel.findOne({_id: shiftId, volunteers: volunteerId})
     if(!shift){
         return res.status(404).json({message: "Shift not found"})
     }
-    if(shift.userId.toString() !== volunteerId){
-        return res.status(403).json({message: "You are not authorized to update this shift"})
-    }
-    let { status } = req.body
+    let { status } = req.body || {}
     if(!status || !["scheduled", "ongoing", "completed", "cancelled"].includes(status)){
         return res.status(400).json({message: "Invalid status"})
     }

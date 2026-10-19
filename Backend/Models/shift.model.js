@@ -6,8 +6,8 @@ const shiftSchema = new Schema({
         ref: 'Festival',
         required: true,
     },
-    userId: {
-        type: Types.ObjectId,
+    volunteers: {
+        type: [Types.ObjectId],
         ref: 'User',
         required: true,
     },
@@ -30,7 +30,7 @@ const shiftSchema = new Schema({
         required: true,
         validate: {
             validator: function (v) {
-                return v >= this.startTime;
+                return v > this.startTime;
             },
             message: 'End time must be after start time',
         },

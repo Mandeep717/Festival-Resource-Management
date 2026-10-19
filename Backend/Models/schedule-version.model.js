@@ -46,7 +46,7 @@ const scheduleSnapshotSchema = new Schema({
         required: true,
         validate: {
             validator: function (v) {
-                return v >= this.startTime;
+                return v > this.startTime;
             },
             message: 'End time must be after start time',
         },

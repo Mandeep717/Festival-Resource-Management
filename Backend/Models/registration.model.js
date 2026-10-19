@@ -14,7 +14,7 @@ const registrationSchema = new Schema({
     sessionId: {
         type: Types.ObjectId,
         ref: 'FestivalSession',
-        required: true,
+        // required: true,
     },
     status: {
         type: String,
@@ -32,7 +32,7 @@ const registrationSchema = new Schema({
 })
 
 registrationSchema.index(
-    { sessionId: 1, userId: 1 },
+    { festivalId: 1, userId: 1, sessionId: 1 },
     { unique: true }
 );
 

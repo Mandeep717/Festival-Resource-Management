@@ -49,4 +49,4 @@ const waitlistSchema = new Schema({
     strict: "throw"
 })
 
-export const WaitlistModel = model('Waitlist', waitlistSchema)
+export const WaitListModel = model('Waitlist', waitlistSchema)

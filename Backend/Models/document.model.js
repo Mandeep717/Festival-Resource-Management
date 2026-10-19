@@ -5,6 +5,10 @@ const documentSchema = new Schema({
         type: String,
         required: true,
     },
+    content: {
+        type: String,
+        required: true,
+    },
     author: {
         type: Types.ObjectId,
         ref: 'User',

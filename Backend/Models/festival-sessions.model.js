@@ -28,7 +28,7 @@ const festivalSessionSchema = new Schema({
         required: true,
         validate: {
             validator: function (v) {
-                return v >= this.startTime;
+                return v > this.startTime;
             },
             message: 'End time must be after start time',
         },
@@ -42,6 +42,31 @@ const festivalSessionSchema = new Schema({
         type: String,
         enum: ['scheduled', 'ongoing', 'completed', 'cancelled'],
         default: 'scheduled',
+    },
+    proposalStatus: {
+        type: String,
+        enum: ['pending', 'approved', 'rejected'],
+        default: 'approved',
+        index: true,
+    },
+    proposedBy: {
+        type: Types.ObjectId,
+        ref: 'User',
+        default: null,
+    },
+    reviewedBy: {
+        type: Types.ObjectId,
+        ref: 'User',
+        default: null,
+    },
+    reviewedAt: {
+        type: Date,
+        default: null,
+    },
+    reviewNote: {
+        type: String,
+        default: '',
+        trim: true,
     },
     resourcesRequired: {
         type: [Types.ObjectId],
