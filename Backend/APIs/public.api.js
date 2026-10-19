@@ -17,28 +17,6 @@ import {
 
 export const publicRouter = exp.Router()
 
-function cosineSimilarity(vectorA, vectorB) {
-    if (!Array.isArray(vectorA) || !Array.isArray(vectorB) || vectorA.length !== vectorB.length || vectorA.length === 0) {
-        return null;
-    }
-
-    let dotProduct = 0;
-    let magnitudeA = 0;
-    let magnitudeB = 0;
-
-    for (let index = 0; index < vectorA.length; index += 1) {
-        const valueA = Number(vectorA[index]);
-        const valueB = Number(vectorB[index]);
-        if (!Number.isFinite(valueA) || !Number.isFinite(valueB)) return null;
-        dotProduct += valueA * valueB;
-        magnitudeA += valueA * valueA;
-        magnitudeB += valueB * valueB;
-    }
-
-    if (magnitudeA === 0 || magnitudeB === 0) return null;
-    return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
-}
-
 //Get festival by slug - Public endpoint
 publicRouter.get("/festivals/:slug", async(req, res)=>{
     let {slug} = req.params
@@ -158,20 +136,35 @@ publicRouter.post(
 
         if (documents.length) {
             const queryEmbedding = await generateQueryEmbedding(standaloneQuery);
-            const chunks = await ChunkModel.find({
-                festivalId,
-                documentId: {$in: documents.map(document => document._id)},
-                visibility: {$in: allowedVisibility},
-            }).select("documentId content chunkIndex embedding").lean();
+            const chunks = await ChunkModel.aggregate([
+                {
+                    $vectorSearch: {
+                        index: "festival_index",
+                        path: "embedding",
+                        queryVector: queryEmbedding,
+                        numCandidates: 100,
+                        limit: 5,
+                        filter: {
+                            $and: [
+                                {festivalId: new Types.ObjectId(festivalId)},
+                                {documentId: {$in: documents.map(document => document._id)}},
+                                {visibility: {$in: allowedVisibility}},
+                            ],
+                        },
+                    },
+                },
+                {
+                    $project: {
+                        documentId: 1,
+                        content: 1,
+                        chunkIndex: 1,
+                        score: {$meta: "vectorSearchScore"},
+                    },
+                },
+            ]);
 
             retrievedChunks = chunks
-                .map(chunk => ({
-                    ...chunk,
-                    score: cosineSimilarity(queryEmbedding, chunk.embedding),
-                }))
                 .filter(chunk => Number.isFinite(chunk.score) && typeof chunk.content === "string" && chunk.content.trim())
-                .sort((a, b) => b.score - a.score)
-                .slice(0, 5)
                 .map(chunk => ({
                     ...chunk,
                     documentId: {

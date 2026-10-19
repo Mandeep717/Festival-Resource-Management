@@ -136,6 +136,43 @@ attendeeRouter.get("/festivals/:festivalId", async(req, res)=>{
     res.status(200).json({success: true, festival: festival, message: "Festival details retrieved successfully"})
 })
 
+//Apply for attendee membership in a festival
+attendeeRouter.post("/festivals/:festivalId/membership/apply", verifyToken, async (req, res) => {
+    const { festivalId } = req.params;
+    const attendeeId = req.user.userId;
+    if (!Types.ObjectId.isValid(festivalId)) {
+        return res.status(400).json({success: false, message: "Invalid festival ID"});
+    }
+    if (!Types.ObjectId.isValid(attendeeId)) {
+        return res.status(400).json({success: false, message: "Invalid attendee ID"});
+    }
+    const [festival, attendee] = await Promise.all([
+        FestivalModel.findById(festivalId),
+        UserModel.findById(attendeeId).select("accountType status"),
+    ]);
+    if (!festival) {
+        return res.status(404).json({success: false, message: "Festival not found"});
+    }
+    if (!attendee) {
+        return res.status(404).json({success: false, message: "Attendee not found"});
+    }
+    if (attendee.accountType !== "attendee" || attendee.status !== "active") {
+        return res.status(403).json({success: false, message: "An active attendee account is required"});
+    }
+    const existingMembership = await FestivalMembershipModel.findOne({
+        festivalId,
+        userId: attendeeId,
+        membershipType: "attendee",
+    });
+    if (existingMembership?.status === "active") {
+        return res.status(200).json({success: true, message: "Attendee membership is already active", membership: existingMembership});
+    }
+    const membership = existingMembership
+        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "active"}, {new: true, runValidators: true})
+        : await FestivalMembershipModel.create({festivalId, userId: attendeeId, membershipType: "attendee", status: "active"});
+    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Attendee membership activated successfully", membership});
+});
+
 //Register for a festival
 attendeeRouter.post("/festivals/:festivalId/register", verifyToken, async(req, res)=>{
     let {festivalId} = req.params

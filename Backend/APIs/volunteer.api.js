@@ -25,6 +25,43 @@ volunteerRouter.post('/register', async(req, res)=>{
     res.status(201).json({message: "Volunteer account created; festival access requires an active volunteer membership", volunteer})
 })
 
+//Apply for volunteer membership in a festival
+volunteerRouter.post("/festivals/:festivalId/membership/apply", verifyToken, async (req, res) => {
+    const { festivalId } = req.params;
+    const volunteerId = req.user.userId;
+    if (!Types.ObjectId.isValid(festivalId)) {
+        return res.status(400).json({success: false, message: "Invalid festival ID"});
+    }
+    if (!Types.ObjectId.isValid(volunteerId)) {
+        return res.status(400).json({success: false, message: "Invalid volunteer ID"});
+    }
+    const [festival, volunteer] = await Promise.all([
+        FestivalModel.findById(festivalId),
+        UserModel.findById(volunteerId).select("accountType status"),
+    ]);
+    if (!festival) {
+        return res.status(404).json({success: false, message: "Festival not found"});
+    }
+    if (!volunteer) {
+        return res.status(404).json({success: false, message: "Volunteer not found"});
+    }
+    if (volunteer.accountType !== "volunteer" || volunteer.status !== "active") {
+        return res.status(403).json({success: false, message: "An active volunteer account is required"});
+    }
+    const existingMembership = await FestivalMembershipModel.findOne({
+        festivalId,
+        userId: volunteerId,
+        membershipType: "volunteer",
+    });
+    if (existingMembership?.status === "active") {
+        return res.status(200).json({success: true, message: "Volunteer membership is already active", membership: existingMembership});
+    }
+    const membership = existingMembership
+        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "active"}, {new: true, runValidators: true})
+        : await FestivalMembershipModel.create({festivalId, userId: volunteerId, membershipType: "volunteer", status: "active"});
+    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Volunteer membership activated successfully", membership});
+});
+
 //Login a volunteer
 volunteerRouter.post('/login', async(req, res)=>{
     let volunteerCred = req.body || {}

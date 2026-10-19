@@ -165,6 +165,43 @@ organizerRouter.post('/festivals', verifyToken, async(req, res)=>{
     res.status(201).json({message: "Festival created successfully", festival: newFestival})
 })
 
+//Apply for organizer membership in a festival
+organizerRouter.post("/festivals/:festivalId/membership/apply", verifyToken, async (req, res) => {
+    const { festivalId } = req.params;
+    const organizerId = req.user.userId;
+    if (!Types.ObjectId.isValid(festivalId)) {
+        return res.status(400).json({success: false, message: "Invalid festival ID"});
+    }
+    if (!Types.ObjectId.isValid(organizerId)) {
+        return res.status(400).json({success: false, message: "Invalid organizer ID"});
+    }
+    const [festival, organizer] = await Promise.all([
+        FestivalModel.findById(festivalId),
+        UserModel.findById(organizerId).select("accountType status"),
+    ]);
+    if (!festival) {
+        return res.status(404).json({success: false, message: "Festival not found"});
+    }
+    if (!organizer) {
+        return res.status(404).json({success: false, message: "Organizer not found"});
+    }
+    if (organizer.accountType !== "organizer" || organizer.status !== "active") {
+        return res.status(403).json({success: false, message: "An active organizer account is required"});
+    }
+    const existingMembership = await FestivalMembershipModel.findOne({
+        festivalId,
+        userId: organizerId,
+        membershipType: "organizer",
+    });
+    if (existingMembership?.status === "active") {
+        return res.status(200).json({success: true, message: "Organizer membership is already active", membership: existingMembership});
+    }
+    const membership = existingMembership
+        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "active"}, {new: true, runValidators: true})
+        : await FestivalMembershipModel.create({festivalId, userId: organizerId, membershipType: "organizer", status: "active"});
+    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Organizer membership activated successfully", membership});
+});
+
 //Get all festivals
 organizerRouter.get("/festivals", verifyToken, allowedRoles(["organizer"]), async(req, res)=>{
     const festivalIds = await FestivalMembershipModel.distinct("festivalId", {
