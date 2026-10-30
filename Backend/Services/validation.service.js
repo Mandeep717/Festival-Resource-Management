@@ -3,6 +3,9 @@ import { ScheduleVersionModel } from "../Models/schedule-version.model.js";
 import { FestivalSessionModel } from "../Models/festival-sessions.model.js";
 import { VenueModel } from "../Models/venue.model.js";
 import { ResourceModel } from "../Models/resource.model.js";
+import { FestivalModel } from "../Models/festival.model.js";
+import { UserModel } from "../Models/user.model.js";
+import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
 
 export class ScheduleValidationError extends Error {
   constructor(statusCode, message, details = {}) {
@@ -391,15 +394,21 @@ export async function validateScheduleVersion({ festivalId, versionId }) {
   }
 
   const snapshot = version.scheduleSnapshot || [];
+  if (snapshot.length === 0) {
+    throw new ScheduleValidationError(422, "A schedule must contain at least one session.");
+  }
+  const festival = await FestivalModel.findById(festivalId).select("startDate endDate").lean();
+  if (!festival) throw new ScheduleValidationError(404, "Festival not found.");
   const sessionIds = [...new Set(snapshot.map((entry) => String(entry.sessionId)))];
   const venueIds = [...new Set(snapshot.map((entry) => String(entry.venueId)))];
+  const volunteerIds = [...new Set(snapshot.flatMap((entry) => (entry.volunteersAssigned || []).map(String)))];
   const allocatedResourceIds = snapshot.flatMap((entry) =>
     (entry.resourcesAllocated || []).map((allocation) =>
       String(allocation.resourceId)
     )
   );
 
-  const invalidIds = [...sessionIds, ...venueIds, ...allocatedResourceIds]
+  const invalidIds = [...sessionIds, ...venueIds, ...allocatedResourceIds, ...volunteerIds]
     .filter((id) => !Types.ObjectId.isValid(id));
 
   if (invalidIds.length > 0) {
@@ -410,7 +419,24 @@ export async function validateScheduleVersion({ festivalId, versionId }) {
     );
   }
 
-  const [sessions, venues] = await Promise.all([
+  for (const [entryIndex, entry] of snapshot.entries()) {
+    const start = new Date(entry.startTime);
+    const end = new Date(entry.endTime);
+    if (
+      !Number.isFinite(start.getTime()) ||
+      !Number.isFinite(end.getTime()) ||
+      start < new Date(festival.startDate) ||
+      end > new Date(festival.endDate)
+    ) {
+      throw new ScheduleValidationError(
+        422,
+        "Schedule times must be valid and fall within the festival dates.",
+        { validationErrors: [{ entryIndex, message: "Schedule entry is outside the festival date range." }] }
+      );
+    }
+  }
+
+  const [sessions, venues, volunteers, activeVolunteerMemberships] = await Promise.all([
     FestivalSessionModel.find({
       _id: { $in: sessionIds },
       festivalId,
@@ -420,7 +446,29 @@ export async function validateScheduleVersion({ festivalId, versionId }) {
       _id: { $in: venueIds },
       festivalId,
     }).select("_id name capacity status").lean(),
+    UserModel.find({
+      _id: { $in: volunteerIds },
+      accountType: "volunteer",
+      status: "active",
+    }).select("_id").lean(),
+    FestivalMembershipModel.find({
+      festivalId,
+      userId: { $in: volunteerIds },
+      membershipType: "volunteer",
+      status: "active",
+    }).select("userId").lean(),
   ]);
+
+  const validVolunteerIds = new Set(volunteers.map((user) => String(user._id)));
+  const memberVolunteerIds = new Set(activeVolunteerMemberships.map((membership) => String(membership.userId)));
+  const invalidVolunteers = volunteerIds.filter((id) => !validVolunteerIds.has(id) || !memberVolunteerIds.has(id));
+  if (invalidVolunteers.length) {
+    throw new ScheduleValidationError(
+      422,
+      "Schedule assignments must reference active volunteers who belong to this festival.",
+      { invalidVolunteers }
+    );
+  }
 
   const sessionsById = new Map(sessions.map((item) => [String(item._id), item]));
   const venuesById = new Map(venues.map((item) => [String(item._id), item]));

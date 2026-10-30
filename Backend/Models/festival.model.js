@@ -71,7 +71,14 @@ const festivalSchema = new Schema({
         type: Types.ObjectId,
         ref: 'ScheduleVersion',
         default: null,
-    }
+    },
+    registrationRevision: {
+        type: Number,
+        default: 0,
+        select: false,
+        min: 0,
+        validate: { validator: Number.isInteger, message: 'Registration revision must be a whole number' },
+    },
 },{
     timestamps: true,
     versionKey: false,

@@ -81,6 +81,11 @@ const festivalSessionSchema = new Schema({
     maxParticipants: {
         type: Number,
         default: null,
+        min: 0,
+        validate: {
+            validator: (value) => value === null || Number.isInteger(value),
+            message: 'Maximum participants must be a whole number',
+        },
     },
     registrationDeadline: {
         type: Date,
@@ -106,6 +111,13 @@ const festivalSessionSchema = new Schema({
             },
             message: 'Registration start date must be before registration deadline',
         },
+    },
+    registrationRevision: {
+        type: Number,
+        default: 0,
+        select: false,
+        min: 0,
+        validate: { validator: Number.isInteger, message: 'Registration revision must be a whole number' },
     }
 },{
     timestamps: true,

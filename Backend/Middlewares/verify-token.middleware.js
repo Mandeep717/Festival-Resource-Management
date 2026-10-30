@@ -1,6 +1,8 @@
 import jwt from "jsonwebtoken";
+import { UserModel } from "../Models/user.model.js";
 
-export function verifyToken(req, res, next) {
+export async function verifyToken(req, res, next) {
+  if (req.user) return next();
   const token = req.cookies?.token;
   if (!token) {
     return res.status(401).json({
@@ -8,11 +10,20 @@ export function verifyToken(req, res, next) {
       message: "Unauthorized access",
     });
   }
+  let decoded;
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
+    decoded = jwt.verify(token, process.env.JWT_SECRET);
   } catch (error) {
     return res.status(401).json({success: false, message: "Please login again",});
   }
+  const user = await UserModel.findOne({ _id: decoded.userId, status: "active" })
+    .select("email accountType status");
+  if (!user) {
+    return res.status(401).json({
+      success: false,
+      message: "This account is no longer active",
+    });
+  }
+  req.user = { ...decoded, email: user.email, accountType: user.accountType };
+  return next();
 }

@@ -14,6 +14,7 @@ import { VenueModel } from "../Models/venue.model.js";
 import { ResourceModel } from "../Models/resource.model.js";
 import { FestivalSessionModel} from "../Models/festival-sessions.model.js";
 import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
+import { requireAccountType } from "../Middlewares/require-account-type.middleware.js";
 import { RegistrationModel } from "../Models/registration.model.js";
 import { ShiftModel } from "../Models/shift.model.js";
 import { DocumentModel } from "../Models/document.model.js";
@@ -32,10 +33,30 @@ const documentUpload = multer({
     limits: { fileSize: 10 * 1024 * 1024 },
 });
 
+async function hasActiveFestivalVolunteers(festivalId, volunteerIds) {
+    if (!Array.isArray(volunteerIds) || volunteerIds.some((id) => !Types.ObjectId.isValid(id))) return false;
+    const uniqueIds = [...new Set(volunteerIds.map(String))];
+    if (uniqueIds.length !== volunteerIds.length) return false;
+    if (!uniqueIds.length) return true;
+    const memberships = await FestivalMembershipModel.countDocuments({
+        festivalId,
+        userId: { $in: uniqueIds },
+        membershipType: "volunteer",
+        status: "active",
+    });
+    const users = await UserModel.countDocuments({
+        _id: { $in: uniqueIds },
+        accountType: "volunteer",
+        status: "active",
+    });
+    return memberships === uniqueIds.length && users === uniqueIds.length;
+}
+
 //Register a new organizer
 organizerRouter.post('/register', async(req, res)=>{
     const { email, password, name } = req.body || {}
     if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) return res.status(400).json({message: "Email, password, and name are required"})
+    if (password.length < 8 || password.length > 72) return res.status(400).json({message: "Password must be between 8 and 72 characters"})
     const hashedPassword = await hash(password, 12);
     let newOrganizer = await UserModel.create({email, name, password: hashedPassword, accountType: "organizer"})
     const organizer = newOrganizer.toObject()
@@ -48,7 +69,7 @@ organizerRouter.post('/login', async(req, res)=>{
     if(typeof organizerCred.email !== "string" || typeof organizerCred.password !== "string" || !organizerCred.email.trim() || !organizerCred.password) {
         return res.status(400).json({message: "Email and password are required"})
     }
-    const user = await UserModel.findOne({ email: organizerCred.email.trim().toLowerCase() });
+    const user = await UserModel.findOne({ email: organizerCred.email.trim().toLowerCase(), accountType: "organizer" });
     if (!user || user.status !== "active") {
         return res.status(401).json({message: "Invalid credentials"})
     }
@@ -66,13 +87,13 @@ organizerRouter.post('/login', async(req, res)=>{
 })
 
 //Logout
-organizerRouter.post('/logout', verifyToken, (req, res)=>{
+organizerRouter.post('/logout', verifyToken, requireAccountType("organizer"), (req, res)=>{
     res.clearCookie("token");
     res.status(200).json({ message: "Logout successful" });
 })
 
 //Get profile of logged-in organizer
-organizerRouter.get('/me', verifyToken, async(req, res)=>{
+organizerRouter.get('/me', verifyToken, requireAccountType("organizer"), async(req, res)=>{
     let organizerId = req.user.userId
     if(!Types.ObjectId.isValid(organizerId)){
         return res.status(400).json({message: "Invalid organizer ID"})
@@ -85,12 +106,13 @@ organizerRouter.get('/me', verifyToken, async(req, res)=>{
 })
 
 //Change password for logged-in organizer
-organizerRouter.put('/change-password', verifyToken, async(req, res)=>{
+organizerRouter.put('/change-password', verifyToken, requireAccountType("organizer"), async(req, res)=>{
     let organizerId = req.user.userId
     if(!Types.ObjectId.isValid(organizerId)){
         return res.status(400).json({message: "Invalid organizer ID"})
     }
     let { oldPassword, newPassword } = req.body || {}
+    if (typeof oldPassword !== "string" || typeof newPassword !== "string" || newPassword.length < 8 || newPassword.length > 72) return res.status(400).json({message: "Old password is required and new password must be between 8 and 72 characters"})
     let organizer = await UserModel.findById(organizerId)
     if(!organizer){
         return res.status(404).json({message: "Organizer not found"})
@@ -132,6 +154,8 @@ organizerRouter.post("/forgot-password", async (req, res) => {
     });
 });
 
+organizerRouter.use(verifyToken, requireAccountType("organizer"));
+
 //Create a new festival
 organizerRouter.post('/festivals', verifyToken, async(req, res)=>{
     let organizerId = req.user.userId
@@ -142,13 +166,8 @@ organizerRouter.post('/festivals', verifyToken, async(req, res)=>{
     if(!organizer){
         return res.status(404).json({message: "Organizer not found"})
     }
-    const hasOrganizerMembership = await FestivalMembershipModel.exists({
-        userId: organizerId,
-        membershipType: "organizer",
-        status: "active"
-    })
-    if (organizer.accountType !== "organizer" || !hasOrganizerMembership) {
-        return res.status(403).json({message: "An organizer account with an active organizer membership is required to create a festival"})
+    if (organizer.accountType !== "organizer" || organizer.status !== "active") {
+        return res.status(403).json({message: "An active organizer account is required to create a festival"})
     }
     const { name, slug, description, startDate, endDate, location,
         registrationDeadline, registrationFee, registrationStartDate, status } = req.body || {}
@@ -197,9 +216,9 @@ organizerRouter.post("/festivals/:festivalId/membership/apply", verifyToken, asy
         return res.status(200).json({success: true, message: "Organizer membership is already active", membership: existingMembership});
     }
     const membership = existingMembership
-        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "active"}, {new: true, runValidators: true})
-        : await FestivalMembershipModel.create({festivalId, userId: organizerId, membershipType: "organizer", status: "active"});
-    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Organizer membership activated successfully", membership});
+        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "pending"}, {new: true, runValidators: true})
+        : await FestivalMembershipModel.create({festivalId, userId: organizerId, membershipType: "organizer", status: "pending"});
+    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Organizer membership application submitted for admin review", membership});
 });
 
 //Get all festivals
@@ -232,8 +251,21 @@ organizerRouter.put("/festival/:festivalId", verifyToken, allowedRoles(["organiz
     if(!Types.ObjectId.isValid(festivalId)){
         return res.status(400).json({message: "Invalid festival ID"})
     }
-    const updatedContent = { ...req.body }
-    for (const field of ["_id", "organizerId", "publishedScheduleId", "__v"]) delete updatedContent[field]
+    const currentFestival = await FestivalModel.findById(festivalId)
+    if (!currentFestival) return res.status(404).json({message: "Festival not found"})
+    const updatedContent = { ...(req.body || {}) }
+    for (const field of ["_id", "organizerId", "publishedScheduleId", "registrationRevision", "__v"]) delete updatedContent[field]
+    const effectiveDate = (field) => new Date(updatedContent[field] ?? currentFestival[field])
+    const startDate = effectiveDate("startDate")
+    const endDate = effectiveDate("endDate")
+    const registrationStartDate = effectiveDate("registrationStartDate")
+    const registrationDeadline = effectiveDate("registrationDeadline")
+    if (![startDate, endDate, registrationStartDate, registrationDeadline].every((date) => Number.isFinite(date.getTime()))) {
+        return res.status(400).json({message: "Festival dates must be valid dates"})
+    }
+    if (endDate < startDate) return res.status(400).json({message: "Festival end date must be on or after its start date"})
+    if (registrationDeadline >= startDate) return res.status(400).json({message: "Registration deadline must be before festival start"})
+    if (registrationStartDate >= registrationDeadline) return res.status(400).json({message: "Registration must open before its deadline"})
     let updatedFestival = await FestivalModel.findOneAndUpdate(
         {_id: festivalId},
         updatedContent,
@@ -460,12 +492,15 @@ organizerRouter.post("/festivals/:festivalId/sessions", verifyToken, allowedRole
     if(!Types.ObjectId.isValid(festivalId)){
         return res.status(400).json({message: "Invalid festival ID"})
     }
+    const festival = await FestivalModel.findById(festivalId).select("startDate endDate")
+    if (!festival) return res.status(404).json({message: "Festival not found"})
     let sessionData = { ...(req.body || {}) }
     for (const field of ["_id", "__v", "festivalId", "proposalStatus", "proposedBy", "reviewedBy", "reviewedAt", "reviewNote"]) {
         delete sessionData[field]
     }
     if (req.festivalRole === "volunteer") {
         delete sessionData.status
+        delete sessionData.volunteersAssigned
         sessionData.proposalStatus = "pending"
         sessionData.proposedBy = req.user.userId
         sessionData.reviewedBy = null
@@ -475,6 +510,20 @@ organizerRouter.post("/festivals/:festivalId/sessions", verifyToken, allowedRole
         sessionData.proposalStatus = "approved"
     }
     sessionData.festivalId = festivalId
+    if (sessionData.resourcesRequired === undefined) sessionData.resourcesRequired = []
+    if (!Array.isArray(sessionData.resourcesRequired)) {
+        return res.status(400).json({message: "resourcesRequired must be an array"})
+    }
+    if (req.festivalRole === "organizer" && sessionData.volunteersAssigned !== undefined &&
+        !await hasActiveFestivalVolunteers(festivalId, sessionData.volunteersAssigned)) {
+        return res.status(400).json({message: "Assigned volunteers must be active members of this festival, without duplicates"})
+    }
+    const sessionStart = new Date(sessionData.startTime)
+    const sessionEnd = new Date(sessionData.endTime)
+    if (!Number.isFinite(sessionStart.getTime()) || !Number.isFinite(sessionEnd.getTime()) ||
+        sessionStart < festival.startDate || sessionEnd > festival.endDate) {
+        return res.status(400).json({message: "Session times must be valid and within the festival dates"})
+    }
     const venueExists = await VenueModel.exists({_id: sessionData.venueId, festivalId})
     if (!venueExists) return res.status(400).json({message: "Session venue must belong to this festival"})
     const resourceIds = sessionData.resourcesRequired || []
@@ -527,6 +576,41 @@ organizerRouter.get("/festivals/:festivalId/sessions/:sessionId", verifyToken, a
     res.status(200).json({success: true, session: session})
 })
 
+// Session registration roster with attendance/check-in tracking.
+organizerRouter.get("/festivals/:festivalId/sessions/:sessionId/registrations", verifyToken, allowedRoles(["organizer"]), async (req, res) => {
+    const { festivalId, sessionId } = req.params;
+    if (!Types.ObjectId.isValid(festivalId) || !Types.ObjectId.isValid(sessionId)) {
+        return res.status(400).json({success: false, message: "Invalid festival or session ID"});
+    }
+    const session = await FestivalSessionModel.exists({_id: sessionId, festivalId});
+    if (!session) return res.status(404).json({success: false, message: "Festival session not found"});
+    const registrations = await RegistrationModel.find({festivalId, sessionId, status: {$ne: "cancelled"}})
+        .populate("userId", "name email")
+        .sort({registeredAt: 1});
+    return res.status(200).json({success: true, registrations, total: registrations.length});
+});
+
+organizerRouter.patch("/festivals/:festivalId/sessions/:sessionId/registrations/:registrationId/attendance", verifyToken, allowedRoles(["organizer"]), async (req, res) => {
+    const { festivalId, sessionId, registrationId } = req.params;
+    if (![festivalId, sessionId, registrationId].every(Types.ObjectId.isValid)) {
+        return res.status(400).json({success: false, message: "Invalid festival, session, or registration ID"});
+    }
+    const { attendanceStatus } = req.body || {};
+    if (!["checked_in", "no_show"].includes(attendanceStatus)) {
+        return res.status(400).json({success: false, message: "Attendance status must be checked_in or no_show"});
+    }
+    const update = attendanceStatus === "checked_in"
+        ? {attendanceStatus, checkedInAt: new Date(), checkedInBy: req.user.userId}
+        : {attendanceStatus, checkedInAt: null, checkedInBy: null};
+    const registration = await RegistrationModel.findOneAndUpdate(
+        {_id: registrationId, festivalId, sessionId, status: {$ne: "cancelled"}},
+        update,
+        {new: true, runValidators: true}
+    ).populate("userId", "name email");
+    if (!registration) return res.status(404).json({success: false, message: "Active session registration not found"});
+    return res.status(200).json({success: true, registration, message: "Attendance updated"});
+});
+
 //Update a session by sessionId
 organizerRouter.put("/festivals/:festivalId/sessions/:sessionId", verifyToken, allowedRoles(["organizer", "volunteer"]), async (req, res)=>{
     let {festivalId, sessionId} = req.params
@@ -540,6 +624,8 @@ organizerRouter.put("/festivals/:festivalId/sessions/:sessionId", verifyToken, a
     if (!session) {
         return res.status(404).json({message: "Festival session not found"})
     }
+    const festival = await FestivalModel.findById(festivalId).select("startDate endDate")
+    if (!festival) return res.status(404).json({message: "Festival not found"})
 
     const requestBody = { ...(req.body || {}) }
     const updatedContent = {}
@@ -581,15 +667,42 @@ organizerRouter.put("/festivals/:festivalId/sessions/:sessionId", verifyToken, a
             : ""
     }
 
+    const effectiveSessionDate = (field) => {
+        const value = Object.prototype.hasOwnProperty.call(updatedContent, field) ? updatedContent[field] : session[field]
+        return value === null ? null : new Date(value)
+    }
+    const startTime = effectiveSessionDate("startTime")
+    const endTime = effectiveSessionDate("endTime")
+    const registrationDeadline = effectiveSessionDate("registrationDeadline")
+    const registrationStartDate = effectiveSessionDate("registrationStartDate")
+    if (![startTime, endTime].every((date) => date && Number.isFinite(date.getTime()))) {
+        return res.status(400).json({message: "Session start and end times must be valid dates"})
+    }
+    if (endTime <= startTime) return res.status(400).json({message: "Session end time must be after its start time"})
+    if (startTime < festival.startDate || endTime > festival.endDate) {
+        return res.status(400).json({message: "Session times must fall within the festival dates"})
+    }
+    if (registrationDeadline && (!Number.isFinite(registrationDeadline.getTime()) || registrationDeadline >= startTime)) {
+        return res.status(400).json({message: "Session registration deadline must be before session start"})
+    }
+    if (registrationStartDate && (!registrationDeadline || !Number.isFinite(registrationStartDate.getTime()) || registrationStartDate >= registrationDeadline)) {
+        return res.status(400).json({message: "Session registration must open before a valid registration deadline"})
+    }
+
     if (updatedContent.venueId) {
         const venueExists = await VenueModel.exists({_id: updatedContent.venueId, festivalId})
         if (!venueExists) return res.status(400).json({message: "Session venue must belong to this festival"})
     }
-    if (updatedContent.resourcesRequired) {
+    if (Object.prototype.hasOwnProperty.call(updatedContent, "resourcesRequired")) {
+        if (!Array.isArray(updatedContent.resourcesRequired)) return res.status(400).json({message: "resourcesRequired must be an array"})
         const resourceCount = await ResourceModel.countDocuments({_id: {$in: updatedContent.resourcesRequired}, festivalId})
         if (resourceCount !== new Set(updatedContent.resourcesRequired.map(String)).size) {
             return res.status(400).json({message: "All required resources must belong to this festival"})
         }
+    }
+    if (req.festivalRole === "organizer" && updatedContent.volunteersAssigned !== undefined &&
+        !await hasActiveFestivalVolunteers(festivalId, updatedContent.volunteersAssigned)) {
+        return res.status(400).json({message: "Assigned volunteers must be active members of this festival, without duplicates"})
     }
     let updatedSession = await FestivalSessionModel.findOneAndUpdate({_id: sessionId, festivalId: festivalId}, updatedContent, {new: true, runValidators: true})
     if(!updatedSession){

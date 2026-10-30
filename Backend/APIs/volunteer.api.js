@@ -11,6 +11,7 @@ import { FestivalModel } from "../Models/festival.model.js";
 import { ScheduleVersionModel } from "../Models/schedule-version.model.js";
 import { FestivalSessionModel } from "../Models/festival-sessions.model.js";
 import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
+import { requireAccountType } from "../Middlewares/require-account-type.middleware.js";
 
 export const volunteerRouter = exp.Router()
 
@@ -18,6 +19,7 @@ export const volunteerRouter = exp.Router()
 volunteerRouter.post('/register', async(req, res)=>{
     const { email, password, name } = req.body || {}
     if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) return res.status(400).json({message: "Email, password, and name are required"})
+    if (password.length < 8 || password.length > 72) return res.status(400).json({message: "Password must be between 8 and 72 characters"})
     const hashedPassword = await hash(password, 12);
     let newVolunteer = await UserModel.create({email, name, password: hashedPassword, accountType: "volunteer"})
     const volunteer = newVolunteer.toObject()
@@ -57,9 +59,9 @@ volunteerRouter.post("/festivals/:festivalId/membership/apply", verifyToken, asy
         return res.status(200).json({success: true, message: "Volunteer membership is already active", membership: existingMembership});
     }
     const membership = existingMembership
-        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "active"}, {new: true, runValidators: true})
-        : await FestivalMembershipModel.create({festivalId, userId: volunteerId, membershipType: "volunteer", status: "active"});
-    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Volunteer membership activated successfully", membership});
+        ? await FestivalMembershipModel.findByIdAndUpdate(existingMembership._id, {status: "pending"}, {new: true, runValidators: true})
+        : await FestivalMembershipModel.create({festivalId, userId: volunteerId, membershipType: "volunteer", status: "pending"});
+    return res.status(existingMembership ? 200 : 201).json({success: true, message: "Volunteer membership application submitted for admin review", membership});
 });
 
 //Login a volunteer
@@ -68,7 +70,7 @@ volunteerRouter.post('/login', async(req, res)=>{
     if(typeof volunteerCred.email !== "string" || typeof volunteerCred.password !== "string" || !volunteerCred.email.trim() || !volunteerCred.password) {
         return res.status(400).json({message: "Email and password are required"})
     }
-    const user = await UserModel.findOne({ email: volunteerCred.email.trim().toLowerCase() });
+    const user = await UserModel.findOne({ email: volunteerCred.email.trim().toLowerCase(), accountType: "volunteer" });
     if (!user || user.status !== "active") {
         return res.status(401).json({message: "Invalid credentials"})
     }
@@ -86,13 +88,13 @@ volunteerRouter.post('/login', async(req, res)=>{
 })
 
 //Logout
-volunteerRouter.post('/logout', verifyToken, (req, res)=>{
+volunteerRouter.post('/logout', verifyToken, requireAccountType("volunteer"), (req, res)=>{
     res.clearCookie("token");
     res.status(200).json({ message: "Logout successful" });
 })
 
 //Get profile of logged-in volunteer
-volunteerRouter.get('/me', verifyToken, async(req, res)=>{
+volunteerRouter.get('/me', verifyToken, requireAccountType("volunteer"), async(req, res)=>{
     let volunteerId = req.user.userId
     if(!Types.ObjectId.isValid(volunteerId)){
         return res.status(400).json({message: "Invalid volunteer ID"})
@@ -105,7 +107,7 @@ volunteerRouter.get('/me', verifyToken, async(req, res)=>{
 })
 
 //Change password of logged-in volunteer
-volunteerRouter.put('/change-password', verifyToken, async(req, res)=>{
+volunteerRouter.put('/change-password', verifyToken, requireAccountType("volunteer"), async(req, res)=>{
     let volunteerId = req.user.userId
     if(!volunteerId){
         return res.status(400).json({message: "Volunteer ID is required"})
@@ -114,6 +116,7 @@ volunteerRouter.put('/change-password', verifyToken, async(req, res)=>{
         return res.status(400).json({message: "Invalid volunteer ID"})
     }
     let { oldPassword, newPassword } = req.body || {}
+    if (typeof oldPassword !== "string" || typeof newPassword !== "string" || newPassword.length < 8 || newPassword.length > 72) return res.status(400).json({message: "Old password is required and new password must be between 8 and 72 characters"})
     let volunteer = await UserModel.findById(volunteerId)
     if(!volunteer){
         return res.status(404).json({message: "Volunteer not found"})
@@ -154,6 +157,8 @@ volunteerRouter.post("/forgot-password", async (req, res) => {
         message: "If the email exists, a password reset link will be sent",
     });
 });
+
+volunteerRouter.use(verifyToken, requireAccountType("volunteer"));
 
 //List of festivals accessible to volunteers
 volunteerRouter.get("/festivals", verifyToken, async(req, res)=>{

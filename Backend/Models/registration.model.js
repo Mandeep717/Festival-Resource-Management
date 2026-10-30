@@ -21,6 +21,20 @@ const registrationSchema = new Schema({
         enum: ['pending', 'confirmed', 'cancelled'],
         default: 'pending',
     },
+    attendanceStatus: {
+        type: String,
+        enum: ['not_marked', 'checked_in', 'no_show'],
+        default: 'not_marked',
+    },
+    checkedInAt: {
+        type: Date,
+        default: null,
+    },
+    checkedInBy: {
+        type: Types.ObjectId,
+        ref: 'User',
+        default: null,
+    },
     registeredAt: {
         type: Date,
         default: Date.now,
@@ -35,5 +49,7 @@ registrationSchema.index(
     { festivalId: 1, userId: 1, sessionId: 1 },
     { unique: true }
 );
+registrationSchema.index({ festivalId: 1, sessionId: 1, status: 1, registeredAt: 1 });
+registrationSchema.index({ userId: 1, registeredAt: -1 });
 
 export const RegistrationModel = model('Registration', registrationSchema);

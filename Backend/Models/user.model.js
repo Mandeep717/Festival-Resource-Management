@@ -7,6 +7,8 @@ const userSchema = new Schema({
         unique: true,
         lowercase: true,
         trim: true,
+        maxlength: 254,
+        match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'A valid email address is required'],
     },
     password: {
         type: String,
@@ -14,11 +16,15 @@ const userSchema = new Schema({
     },
     name: {
         type: String,
-        required: true
+        required: true,
+        trim: true,
+        minlength: 1,
+        maxlength: 100,
     },
     accountType: {
         type: String,
-        enum: ['attendee', 'organizer', 'volunteer'],
+        enum: ['attendee', 'organizer', 'volunteer', 'admin'],
+        required: true,
     },
     status: {
         type: String,

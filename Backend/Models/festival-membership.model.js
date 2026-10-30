@@ -27,4 +27,9 @@ const festivalMembershipSchema = new Schema({
     strict: "throw"
 })
 
+festivalMembershipSchema.index(
+    { festivalId: 1, userId: 1, membershipType: 1 },
+    { unique: true }
+);
+
 export const FestivalMembershipModel = model('FestivalMembership', festivalMembershipSchema)

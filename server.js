@@ -14,11 +14,13 @@ import { publicRouter } from './Backend/APIs/public.api.js'
 import { volunteerRouter } from './Backend/APIs/volunteer.api.js'
 import { attendeeRouter } from './Backend/APIs/attendee.api.js'
 import { organizerRouter } from './Backend/APIs/organizer.api.js'
+import { adminRouter } from './Backend/APIs/admin.api.js'
 
 app.use('/api', publicRouter)
 app.use('/api/volunteer', volunteerRouter)
 app.use('/api/attendee', attendeeRouter)
 app.use('/api/organizer', organizerRouter)
+app.use('/api/admin', adminRouter)
 
 async function connectToDb(){
     try{
@@ -38,6 +40,16 @@ connectToDb()
 //Error-Handling Middleware
 app.use((err, req, res, next) => {
     if (res.headersSent) return next(err)
+    if (err?.name === "ValidationError") {
+        const details = Object.values(err.errors || {}).map((item) => ({ field: item.path, message: item.message }))
+        return res.status(400).json({success: false, message: "Request validation failed", errors: details})
+    }
+    if (err?.name === "CastError") {
+        return res.status(400).json({success: false, message: "Invalid value", field: err.path})
+    }
+    if (err?.code === 11000) {
+        return res.status(409).json({success: false, message: "A record with this unique value already exists"})
+    }
     const statusCode = Number.isInteger(err.statusCode) && err.statusCode >= 400 && err.statusCode < 600
         ? err.statusCode
         : 500
@@ -45,5 +57,5 @@ app.use((err, req, res, next) => {
         console.error(err.stack)
         return res.status(500).send('Something went wrong!')
     }
-    return res.status(statusCode).json({success: false, message: err.message})
+    return res.status(statusCode).json({success: false, message: err.message, ...(err.details ? {details: err.details} : {})})
 })

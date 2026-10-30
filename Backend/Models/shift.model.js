@@ -10,6 +10,7 @@ const shiftSchema = new Schema({
         type: [Types.ObjectId],
         ref: 'User',
         required: true,
+        validate: { validator: (value) => Array.isArray(value) && value.length > 0, message: 'At least one volunteer must be assigned' },
     },
     sessionId: {
         type: Types.ObjectId,

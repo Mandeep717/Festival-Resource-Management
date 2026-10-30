@@ -13,6 +13,7 @@ const venueSchema = new Schema({
         type: Number,
         required: true,
         min: 0,
+        validate: { validator: Number.isInteger, message: 'Capacity must be a whole number' },
     },
     description: {
         type: String,

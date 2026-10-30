@@ -22,6 +22,13 @@ export const allowedRoles = (...requestedRoles) => {
         });
       }
 
+      if (!roles.includes(req.user?.accountType)) {
+        return res.status(403).json({
+          success: false,
+          message: "The account type does not match an allowed festival role",
+        });
+      }
+
       const festivalId =
         req.params.festivalId ||
         req.body?.festivalId ||
@@ -31,7 +38,7 @@ export const allowedRoles = (...requestedRoles) => {
       // already hold an active membership for the requested role.
       const membershipQuery = {
         userId,
-        membershipType: { $in: roles },
+        membershipType: req.user.accountType,
         status: "active",
       };
       if (festivalId) membershipQuery.festivalId = festivalId;

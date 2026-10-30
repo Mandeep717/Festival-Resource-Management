@@ -10,6 +10,7 @@ const resourcesAllocatedSchema = new Schema({
         type: Number,
         required: true,
         min: 1,
+        validate: { validator: Number.isInteger, message: 'Allocated quantity must be a whole number' },
     },
 },{
     timestamps: true,
@@ -36,6 +37,7 @@ const scheduleSnapshotSchema = new Schema({
         type: Number,
         required: true,
         min: 0,
+        validate: { validator: Number.isInteger, message: 'Capacity must be a whole number' },
     },
     startTime: {
         type: Date,

@@ -20,6 +20,7 @@ const waitlistSchema = new Schema({
         type: Number,
         required: true,
         min: 1,
+        validate: { validator: Number.isInteger, message: 'Waitlist position must be a whole number' },
     },
     status: {
         type: String,
@@ -48,5 +49,11 @@ const waitlistSchema = new Schema({
     versionKey: false,
     strict: "throw"
 })
+
+waitlistSchema.index(
+    { festivalId: 1, sessionId: 1, userId: 1 },
+    { unique: true, partialFilterExpression: { status: 'waiting' } }
+)
+waitlistSchema.index({ festivalId: 1, sessionId: 1, status: 1, position: 1, joinedAt: 1 })
 
 export const WaitListModel = model('Waitlist', waitlistSchema)
