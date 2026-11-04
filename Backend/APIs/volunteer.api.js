@@ -1,6 +1,5 @@
 import exp from 'express';
 import { hash, compare } from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { Types } from "mongoose";
 import crypto from "crypto";
 import { verifyToken } from "../Middlewares/verify-token.middleware.js";
@@ -12,11 +11,13 @@ import { ScheduleVersionModel } from "../Models/schedule-version.model.js";
 import { FestivalSessionModel } from "../Models/festival-sessions.model.js";
 import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
 import { requireAccountType } from "../Middlewares/require-account-type.middleware.js";
+import { sessionCookieOptions, signSessionToken } from "../Services/session.service.js";
+import { authAttemptLimit } from "../Middlewares/auth-attempt-limit.middleware.js";
 
 export const volunteerRouter = exp.Router()
 
 //Register a new volunteer
-volunteerRouter.post('/register', async(req, res)=>{
+volunteerRouter.post('/register', authAttemptLimit, async(req, res)=>{
     const { email, password, name } = req.body || {}
     if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) return res.status(400).json({message: "Email, password, and name are required"})
     if (password.length < 8 || password.length > 72) return res.status(400).json({message: "Password must be between 8 and 72 characters"})
@@ -65,7 +66,7 @@ volunteerRouter.post("/festivals/:festivalId/membership/apply", verifyToken, asy
 });
 
 //Login a volunteer
-volunteerRouter.post('/login', async(req, res)=>{
+volunteerRouter.post('/login', authAttemptLimit, async(req, res)=>{
     let volunteerCred = req.body || {}
     if(typeof volunteerCred.email !== "string" || typeof volunteerCred.password !== "string" || !volunteerCred.email.trim() || !volunteerCred.password) {
         return res.status(400).json({message: "Email and password are required"})
@@ -78,18 +79,14 @@ volunteerRouter.post('/login', async(req, res)=>{
     if (!isMatch) {
         return res.status(401).json({message: "Invalid credentials"})
     }
-    const token = jwt.sign(
-        { userId: user._id, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-    );
-    res.cookie("token", token, { httpOnly: true });
-    res.status(200).json({ message: "Login successful", token });
+    const token = signSessionToken(user);
+    res.cookie("token", token, sessionCookieOptions());
+    res.status(200).json({ message: "Login successful" });
 })
 
 //Logout
-volunteerRouter.post('/logout', verifyToken, requireAccountType("volunteer"), (req, res)=>{
-    res.clearCookie("token");
+volunteerRouter.post('/logout', (req, res)=>{
+    res.clearCookie("token", sessionCookieOptions());
     res.status(200).json({ message: "Logout successful" });
 })
 
@@ -132,7 +129,7 @@ volunteerRouter.put('/change-password', verifyToken, requireAccountType("volunte
 })
 
 // Forgot password
-volunteerRouter.post("/forgot-password", async (req, res) => {
+volunteerRouter.post("/forgot-password", authAttemptLimit, async (req, res) => {
     const { email } = req.body || {};
     if (typeof email !== "string" || !email.trim()) {
         return res.status(400).json({ message: "Email is required" });

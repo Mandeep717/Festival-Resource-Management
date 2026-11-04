@@ -2,7 +2,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from "react
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Button, Loading } from "./components/UI";
 import { ForgotPasswordPage, LoginPage, RegisterPage } from "./pages/AuthPages";
-import { FestivalPage, LandingPage } from "./pages/PublicPages";
+import { FestivalGuidePage, FestivalPage, LandingPage } from "./pages/PublicPages";
 import Workspace from "./pages/Workspace";
 
 function ProtectedWorkspace() {
@@ -25,6 +25,7 @@ function NotFound() {
 function AppRoutes() {
   return <Routes>
     <Route path="/" element={<LandingPage />} />
+    <Route path="/festival-guide" element={<FestivalGuidePage />} />
     <Route path="/festivals/:slug" element={<FestivalPage />} />
     <Route path="/login" element={<LoginPage />} />
     <Route path="/register" element={<RegisterPage />} />

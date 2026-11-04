@@ -6,8 +6,27 @@ import dotenv from 'dotenv'
 const app = exp()
 dotenv.config()
 const PORT = process.env.PORT || 3000
-//Body-Parser Middleware
-app.use(exp.json())
+const allowedOrigins = new Set((process.env.CLIENT_ORIGIN || "http://localhost:5173").split(",").map((origin) => origin.trim()).filter(Boolean))
+
+app.disable("x-powered-by")
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff")
+    res.setHeader("X-Frame-Options", "DENY")
+    res.setHeader("Referrer-Policy", "same-origin")
+    const origin = req.get("Origin")
+    if (origin && !allowedOrigins.has(origin)) return res.status(403).json({success: false, message: "Request origin is not allowed"})
+    if (origin) {
+        res.setHeader("Access-Control-Allow-Origin", origin)
+        res.setHeader("Vary", "Origin")
+        res.setHeader("Access-Control-Allow-Credentials", "true")
+        res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+        res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    }
+    if (req.method === "OPTIONS") return res.sendStatus(204)
+    return next()
+})
+// A small JSON limit prevents accidental or abusive oversized API payloads.
+app.use(exp.json({ limit: "1mb" }))
 app.use(cookieParser())
 
 import { publicRouter } from './Backend/APIs/public.api.js'

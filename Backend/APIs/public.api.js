@@ -1,6 +1,7 @@
 import exp from "express";
+import crypto from "node:crypto";
 import { Types } from "mongoose";
-import { verifyToken } from "../Middlewares/verify-token.middleware.js";
+import { optionalVerifyToken, verifyToken } from "../Middlewares/verify-token.middleware.js";
 import { allowedRoles } from "../Middlewares/allowed-roles.middleware.js";
 import { FestivalModel } from "../Models/festival.model.js";
 import { ScheduleVersionModel } from "../Models/schedule-version.model.js";
@@ -8,6 +9,7 @@ import { FestivalSessionModel } from "../Models/festival-sessions.model.js";
 import { ConversationModel } from "../Models/conversation.model.js";
 import { DocumentModel } from "../Models/document.model.js";
 import { ChunkModel } from "../Models/chunk.model.js";
+import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
 import { generateQueryEmbedding } from "../Services/generate-embeddings.service.js";
 import {
     generateAnswerWithHistory,
@@ -16,6 +18,41 @@ import {
 } from "../Services/llm.service.js";
 
 export const publicRouter = exp.Router()
+
+const chatAttempts = new Map();
+const CHAT_WINDOW_MS = 15 * 60 * 1000;
+const CHAT_MAX_REQUESTS = 30;
+
+function publicChatLimit(req, res, next) {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    let entry = chatAttempts.get(key);
+    if (!entry || now >= entry.resetAt) entry = {count: 0, resetAt: now + CHAT_WINDOW_MS};
+    if (entry.count >= CHAT_MAX_REQUESTS) {
+        res.setHeader("Retry-After", Math.ceil((entry.resetAt - now) / 1000));
+        return res.status(429).json({success: false, message: "Too many festival guide requests. Please try again later."});
+    }
+    entry.count += 1;
+    chatAttempts.set(key, entry);
+    if (chatAttempts.size > 10_000) {
+        for (const [address, attempt] of chatAttempts) if (now >= attempt.resetAt) chatAttempts.delete(address);
+    }
+    return next();
+}
+
+function getVisitorId(req, res) {
+    const existing = req.cookies?.festivalVisitor;
+    if (typeof existing === "string" && /^[a-f0-9]{64}$/i.test(existing)) return existing;
+    const visitorId = crypto.randomBytes(32).toString("hex");
+    res.cookie("festivalVisitor", visitorId, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: "/",
+    });
+    return visitorId;
+}
 
 //Get festival by slug - Public endpoint
 publicRouter.get("/festivals/:slug", async(req, res)=>{
@@ -78,8 +115,8 @@ publicRouter.get("/festivals/:festivalId/sessions", async(req, res)=>{
 //Event-policy chat
 publicRouter.post(
     "/festivals/:festivalId/chat",
-    verifyToken,
-    allowedRoles(["attendee", "volunteer", "organizer"]),
+    optionalVerifyToken,
+    publicChatLimit,
     async (req, res) => {
         const { festivalId } = req.params;
         if (!Types.ObjectId.isValid(festivalId)) {
@@ -91,9 +128,14 @@ publicRouter.post(
             return res.status(400).json({success: false, message: "Query must contain between 1 and 4000 characters"});
         }
 
-        const userId = req.user.userId;
+        const visitorId = req.user ? null : getVisitorId(req, res);
+        const conversationOwner = req.user
+            ? {userId: req.user.userId}
+            : {visitorId};
         const { conversationId } = req.body || {};
         let conversation = null;
+        const festival = await FestivalModel.findById(festivalId).select("name description location startDate endDate registrationStartDate registrationDeadline registrationFee status").lean();
+        if (!festival) return res.status(404).json({success: false, message: "Festival not found"});
 
         if (conversationId) {
             if (!Types.ObjectId.isValid(conversationId)) {
@@ -103,7 +145,7 @@ publicRouter.post(
             conversation = await ConversationModel.findOne({
                 _id: conversationId,
                 festivalId,
-                userId,
+                ...conversationOwner,
             });
             if (!conversation) {
                 return res.status(404).json({success: false, message: "Conversation not found"});
@@ -115,15 +157,21 @@ publicRouter.post(
             ? await generateStandaloneQuery(query, history)
             : query;
 
+        const membership = req.user ? await FestivalMembershipModel.findOne({
+            festivalId,
+            userId: req.user.userId,
+            membershipType: req.user.accountType,
+            status: "active",
+        }).select("membershipType").lean() : null;
         const visibilityByRole = {
             attendee: ["public"],
             volunteer: ["public", "staff"],
             organizer: ["public", "staff", "organizer"],
         };
-        const allowedVisibility = visibilityByRole[req.festivalRole];
-        if (!allowedVisibility) {
-            return res.status(403).json({success: false, message: "Festival membership is not authorized for event-policy chat"});
-        }
+        // Festival members keep their existing role access; everyone else sees public material only.
+        const allowedVisibility = membership
+            ? visibilityByRole[membership.membershipType] || ["public"]
+            : ["public"];
 
         const documents = await DocumentModel.find({
             festivalId,
@@ -174,6 +222,24 @@ publicRouter.post(
                 }));
         }
 
+        const festivalDetails = [
+            `Festival: ${festival.name}`,
+            festival.description ? `Description: ${festival.description}` : null,
+            festival.location ? `Location: ${festival.location}` : null,
+            festival.startDate ? `Starts: ${festival.startDate.toISOString()}` : null,
+            festival.endDate ? `Ends: ${festival.endDate.toISOString()}` : null,
+            festival.status ? `Status: ${festival.status}` : null,
+            festival.registrationStartDate ? `Registration opens: ${festival.registrationStartDate.toISOString()}` : null,
+            festival.registrationDeadline ? `Registration deadline: ${festival.registrationDeadline.toISOString()}` : null,
+            Number.isFinite(festival.registrationFee) ? `Registration fee: ${festival.registrationFee}` : null,
+        ].filter(Boolean).join("\n");
+        retrievedChunks.unshift({
+            content: festivalDetails,
+            documentId: {_id: festival._id, title: "Festival details"},
+            chunkIndex: 0,
+            score: 1,
+        });
+
         const answer = await generateAnswerWithHistory(
             standaloneQuery,
             retrievedChunks,
@@ -189,7 +255,7 @@ publicRouter.post(
 
         if (conversation) {
             await ConversationModel.updateOne(
-                {_id: conversation._id, festivalId, userId},
+                {_id: conversation._id, festivalId, ...conversationOwner},
                 {$push: {
                     messages: {
                         $each: [
@@ -203,7 +269,7 @@ publicRouter.post(
         } else {
             conversation = await ConversationModel.create({
                 festivalId,
-                userId,
+                ...conversationOwner,
                 messages: [
                     {role: "user", content: query},
                     {role: "assistant", content: answer},

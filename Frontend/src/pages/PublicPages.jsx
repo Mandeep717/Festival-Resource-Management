@@ -3,8 +3,9 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowRight, CalendarDays, MapPin, Music2, Sparkles } from "lucide-react";
 import { api, get, post } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { Badge, Button, Card, Empty, ErrorNotice, Loading, PageHeading } from "../components/UI";
+import { Badge, Button, Card, Empty, ErrorNotice, Loading, PageHeading, SelectField } from "../components/UI";
 import { formatDate } from "../utils/formatDate";
+import FestivalChat from "./FestivalChat";
 
 const EMPTY_SESSIONS = [];
 
@@ -13,9 +14,29 @@ function PublicHeader() {
   return <header className="sticky top-0 z-20 border-b border-slate-200/70 bg-[#f7f8f5]/90 backdrop-blur-xl">
     <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 lg:px-8">
       <Link to="/" className="flex items-center gap-3 text-slate-900"><span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-teal-800 text-white"><Music2 size={19} /></span><span><span className="block text-sm font-bold tracking-wide">COMMON GROUND</span><span className="block text-xs text-slate-500">Campus festival</span></span></Link>
-      <nav className="flex items-center gap-2">{user ? <Link to="/workspace/overview" className="rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white">Open {role} workspace</Link> : <><Link to="/login" className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-white">Sign in</Link><Link to="/register" className="rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-900">Join festival</Link></>}</nav>
+      <nav className="flex items-center gap-2"><Link to="/festival-guide" className="rounded-xl px-3 py-2.5 text-sm font-semibold text-slate-600 hover:bg-white">Festival guide</Link>{user ? <Link to="/workspace/overview" className="rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white">Open {role} workspace</Link> : <><Link to="/login" className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-white">Sign in</Link><Link to="/register" className="rounded-xl bg-teal-800 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-900">Join festival</Link></>}</nav>
     </div>
   </header>;
+}
+
+export function FestivalGuidePage() {
+  const [festivals, setFestivals] = useState([]);
+  const [festivalId, setFestivalId] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    get("/attendee/festivals").then((data) => {
+      if (!active) return;
+      const list = data.festivals || [];
+      setFestivals(list);
+      setFestivalId(list[0]?._id || "");
+    }).catch((err) => { if (active) setError(err.message); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  return <div className="min-h-screen bg-[#f7f8f5] text-slate-800"><PublicHeader /><main className="mx-auto max-w-7xl px-5 py-10 lg:px-8"><PageHeading eyebrow="Open to everyone" title="Ask the festival guide" description="Get answers about festival dates, location, registration, and published public guides. You do not need a festival membership." /><ErrorNotice error={error} />{loading ? <Loading label="Finding festivals" /> : festivals.length ? <><div className="mb-5 max-w-sm"><SelectField label="Festival" value={festivalId} onChange={(event) => setFestivalId(event.target.value)} options={festivals.map((festival) => ({value: festival._id, label: festival.name}))} /></div><FestivalChat key={festivalId} festivalId={festivalId} /></> : <Empty title="No festivals are listed yet" detail="The guide will be available when a festival is published." />}</main></div>;
 }
 
 export function LandingPage() {

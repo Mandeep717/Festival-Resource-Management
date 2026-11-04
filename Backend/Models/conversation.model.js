@@ -25,7 +25,12 @@ const conversationSchema = new Schema({
     userId: {
         type: Types.ObjectId,
         ref: 'User',
-        required: true,
+        default: null,
+    },
+    visitorId: {
+        type: String,
+        default: null,
+        index: true,
     },
     messages: {
         type: [messageSchema],

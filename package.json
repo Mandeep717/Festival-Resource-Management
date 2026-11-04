@@ -4,6 +4,11 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "dev": "npm --prefix Frontend run dev",
+    "dev:api": "nodemon server.js",
+    "start": "node server.js",
+    "build:frontend": "npm --prefix Frontend run build",
+    "lint:frontend": "npm --prefix Frontend run lint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

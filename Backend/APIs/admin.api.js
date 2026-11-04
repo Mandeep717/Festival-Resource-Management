@@ -11,6 +11,8 @@ import { ResourceModel } from "../Models/resource.model.js";
 import { ShiftModel } from "../Models/shift.model.js";
 import { IncidentModel } from "../Models/incident.model.js";
 import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
+import { sessionCookieOptions, signSessionToken } from "../Services/session.service.js";
+import { authAttemptLimit } from "../Middlewares/auth-attempt-limit.middleware.js";
 
 export const adminRouter = exp.Router();
 
@@ -23,15 +25,6 @@ const FESTIVAL_STATUSES = ["upcoming", "ongoing", "completed", "cancelled"];
 const SESSION_STATUSES = ["scheduled", "ongoing", "completed", "cancelled"];
 const SHIFT_STATUSES = ["scheduled", "ongoing", "completed", "cancelled"];
 const INCIDENT_STATUSES = ["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"];
-
-function cookieOptions() {
-    return {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
-        path: "/",
-    };
-}
 
 function safeUser(user) {
     if (!user) return user;
@@ -98,7 +91,7 @@ async function verifyAdmin(req, res, next) {
     }
 }
 
-adminRouter.post("/login", async (req, res) => {
+adminRouter.post("/login", authAttemptLimit, async (req, res) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const password = typeof req.body?.password === "string" ? req.body.password : "";
     if (!email || !password) return badRequest(res, "Email and password are required");
@@ -113,17 +106,13 @@ adminRouter.post("/login", async (req, res) => {
 
     admin.lastLogIn = new Date();
     await admin.save();
-    const token = jwt.sign(
-        { userId: String(admin._id), email: admin.email },
-        process.env.JWT_SECRET,
-        { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
-    );
-    res.cookie("token", token, cookieOptions());
+    const token = signSessionToken(admin);
+    res.cookie("token", token, sessionCookieOptions());
     return res.status(200).json({ success: true, message: "Admin login successful", admin: safeUser(admin) });
 });
 
-adminRouter.post("/logout", verifyAdmin, (req, res) => {
-    res.clearCookie("token", cookieOptions());
+adminRouter.post("/logout", (req, res) => {
+    res.clearCookie("token", sessionCookieOptions());
     return res.status(200).json({ success: true, message: "Admin logout successful" });
 });
 
@@ -244,7 +233,7 @@ adminRouter.patch("/users/:id/status", verifyAdmin, async (req, res) => {
 adminRouter.put("/users/:id/password", verifyAdmin, async (req, res) => {
     if (!validId(req.params.id)) return badRequest(res, "Invalid user ID");
     const { password } = req.body || {};
-    if (typeof password !== "string" || password.length < 8) return badRequest(res, "Password must be at least 8 characters");
+    if (typeof password !== "string" || password.length < 8 || password.length > 72) return badRequest(res, "Password must be between 8 and 72 characters");
     const user = await UserModel.findById(req.params.id);
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
     user.password = await hash(password, 12);

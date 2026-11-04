@@ -1,7 +1,6 @@
 import exp from 'express';
 import multer from "multer";
 import { hash, compare } from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { Types } from "mongoose";
 import crypto from "crypto";
 import { verifyToken } from "../Middlewares/verify-token.middleware.js";
@@ -19,12 +18,18 @@ import { RegistrationModel } from "../Models/registration.model.js";
 import { ShiftModel } from "../Models/shift.model.js";
 import { DocumentModel } from "../Models/document.model.js";
 import { ChunkModel } from "../Models/chunk.model.js";
+import { WaitListModel } from "../Models/wailist.model.js";
+import { IncidentModel } from "../Models/incident.model.js";
+import { NotificationModel } from "../Models/notification.model.js";
+import { ConversationModel } from "../Models/conversation.model.js";
 import { conflictIdentity } from "../Services/conflict.service.js";
 import { validateScheduleVersion } from '../Services/validation.service.js';
 import { extractTextFromPDF } from "../Services/read-clean-text.service.js";
 import { splitArticleIntoChunks } from "../Services/chunk.service.js";
 import { generateChunkEmbeddings } from "../Services/generate-embeddings.service.js";
 import { generateAnswer, generateAnswerWithHistory, generateStandaloneQuery } from "../Services/llm.service.js";
+import { sessionCookieOptions, signSessionToken } from "../Services/session.service.js";
+import { authAttemptLimit } from "../Middlewares/auth-attempt-limit.middleware.js";
 
 export const organizerRouter = exp.Router()
 
@@ -53,7 +58,7 @@ async function hasActiveFestivalVolunteers(festivalId, volunteerIds) {
 }
 
 //Register a new organizer
-organizerRouter.post('/register', async(req, res)=>{
+organizerRouter.post('/register', authAttemptLimit, async(req, res)=>{
     const { email, password, name } = req.body || {}
     if (typeof email !== "string" || typeof password !== "string" || typeof name !== "string" || !email.trim() || !password || !name.trim()) return res.status(400).json({message: "Email, password, and name are required"})
     if (password.length < 8 || password.length > 72) return res.status(400).json({message: "Password must be between 8 and 72 characters"})
@@ -64,7 +69,7 @@ organizerRouter.post('/register', async(req, res)=>{
     res.status(201).json({message: "Organizer account created; festival access requires an active organizer membership" , organizer})
 })
 //Login an organizer
-organizerRouter.post('/login', async(req, res)=>{
+organizerRouter.post('/login', authAttemptLimit, async(req, res)=>{
     let organizerCred = req.body
     if(typeof organizerCred.email !== "string" || typeof organizerCred.password !== "string" || !organizerCred.email.trim() || !organizerCred.password) {
         return res.status(400).json({message: "Email and password are required"})
@@ -77,18 +82,14 @@ organizerRouter.post('/login', async(req, res)=>{
     if (!isMatch) {
         return res.status(401).json({message: "Invalid credentials"})
     }
-    const token = jwt.sign(
-        { userId: user._id, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: "1h" }
-    );
-    res.cookie("token", token, { httpOnly: true });
-    res.status(200).json({ message: "Login successful", token });
+    const token = signSessionToken(user);
+    res.cookie("token", token, sessionCookieOptions());
+    res.status(200).json({ message: "Login successful" });
 })
 
 //Logout
-organizerRouter.post('/logout', verifyToken, requireAccountType("organizer"), (req, res)=>{
-    res.clearCookie("token");
+organizerRouter.post('/logout', (req, res)=>{
+    res.clearCookie("token", sessionCookieOptions());
     res.status(200).json({ message: "Logout successful" });
 })
 
@@ -128,7 +129,7 @@ organizerRouter.put('/change-password', verifyToken, requireAccountType("organiz
 })
 
 //Forgot password for organizer
-organizerRouter.post("/forgot-password", async (req, res) => {
+organizerRouter.post("/forgot-password", authAttemptLimit, async (req, res) => {
     const { email } = req.body || {};
     if (typeof email !== "string" || !email.trim()) {
         return res.status(400).json({ message: "Email is required" });
@@ -283,6 +284,13 @@ organizerRouter.delete("/festival/:festivalId", verifyToken, allowedRoles(["orga
     if(!Types.ObjectId.isValid(festivalId)){
         return res.status(400).json({message: "Invalid festival ID"})
     }
+    const hasLinkedData = await Promise.all([
+        RegistrationModel.exists({festivalId}), WaitListModel.exists({festivalId}), FestivalSessionModel.exists({festivalId}),
+        VenueModel.exists({festivalId}), ResourceModel.exists({festivalId}), ShiftModel.exists({festivalId}),
+        DocumentModel.exists({festivalId}), ScheduleVersionModel.exists({festivalId}), FestivalMembershipModel.exists({festivalId}),
+        IncidentModel.exists({festivalId}), NotificationModel.exists({festivalId}), ConversationModel.exists({festivalId}), ChunkModel.exists({festivalId}),
+    ]).then((results) => results.some(Boolean))
+    if (hasLinkedData) return res.status(409).json({success: false, message: "This festival has linked operational records. Archive it by changing its status instead of deleting it."})
     let deletedFestival = await FestivalModel.findOneAndDelete({_id: festivalId})
     if(!deletedFestival){
         return res.status(404).json({message: "Festival not found"})
