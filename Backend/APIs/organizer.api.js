@@ -24,6 +24,7 @@ import { NotificationModel } from "../Models/notification.model.js";
 import { ConversationModel } from "../Models/conversation.model.js";
 import { conflictIdentity } from "../Services/conflict.service.js";
 import { validateScheduleVersion } from '../Services/validation.service.js';
+import { isWithinFestivalDates } from "../Services/festival-date.service.js";
 import { extractTextFromPDF } from "../Services/read-clean-text.service.js";
 import { splitArticleIntoChunks } from "../Services/chunk.service.js";
 import { generateChunkEmbeddings } from "../Services/generate-embeddings.service.js";
@@ -528,8 +529,7 @@ organizerRouter.post("/festivals/:festivalId/sessions", verifyToken, allowedRole
     }
     const sessionStart = new Date(sessionData.startTime)
     const sessionEnd = new Date(sessionData.endTime)
-    if (!Number.isFinite(sessionStart.getTime()) || !Number.isFinite(sessionEnd.getTime()) ||
-        sessionStart < festival.startDate || sessionEnd > festival.endDate) {
+    if (!isWithinFestivalDates(sessionStart, sessionEnd, festival)) {
         return res.status(400).json({message: "Session times must be valid and within the festival dates"})
     }
     const venueExists = await VenueModel.exists({_id: sessionData.venueId, festivalId})
@@ -687,7 +687,7 @@ organizerRouter.put("/festivals/:festivalId/sessions/:sessionId", verifyToken, a
         return res.status(400).json({message: "Session start and end times must be valid dates"})
     }
     if (endTime <= startTime) return res.status(400).json({message: "Session end time must be after its start time"})
-    if (startTime < festival.startDate || endTime > festival.endDate) {
+    if (!isWithinFestivalDates(startTime, endTime, festival)) {
         return res.status(400).json({message: "Session times must fall within the festival dates"})
     }
     if (registrationDeadline && (!Number.isFinite(registrationDeadline.getTime()) || registrationDeadline >= startTime)) {

@@ -100,15 +100,29 @@ publicRouter.get("/festivals/:festivalId/sessions", async(req, res)=>{
         _id: festival.publishedScheduleId,
         festivalId,
         status: "published"
-    })
+    }).populate("scheduleSnapshot.venueId", "name address")
     if (!schedule) {
         return res.status(404).json({message: "Published schedule not found"})
     }
     const sessionIds = schedule.scheduleSnapshot.map(entry => entry.sessionId)
     let sessions = await FestivalSessionModel.find({_id: {$in: sessionIds}, festivalId})
+        .populate("venueId", "name address")
+        .lean()
     if(!sessions.length){
         return res.status(404).json({message: "No sessions found for this festival"})
     }
+    const scheduleEntries = new Map(
+        schedule.scheduleSnapshot.map((entry) => [String(entry.sessionId), entry])
+    )
+    sessions = sessions.map((session) => {
+        const scheduled = scheduleEntries.get(String(session._id))
+        return scheduled ? {
+            ...session,
+            startTime: scheduled.startTime,
+            endTime: scheduled.endTime,
+            venueId: scheduled.venueId,
+        } : session
+    })
     res.status(200).json({success: true, sessions: sessions, message: "Festival sessions retrieved successfully"})
 })
 

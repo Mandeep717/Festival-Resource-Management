@@ -6,6 +6,7 @@ import { ResourceModel } from "../Models/resource.model.js";
 import { FestivalModel } from "../Models/festival.model.js";
 import { UserModel } from "../Models/user.model.js";
 import { FestivalMembershipModel } from "../Models/festival-membership.model.js";
+import { isWithinFestivalDates } from "./festival-date.service.js";
 
 export class ScheduleValidationError extends Error {
   constructor(statusCode, message, details = {}) {
@@ -37,7 +38,7 @@ function makeConflict(
   };
 }
 
-function calculateConflicts(snapshot, sessionsById, venuesById, resourcesById) {
+export function calculateConflicts(snapshot, sessionsById, venuesById, resourcesById) {
   const conflicts = [];
   const conflictKeys = new Set();
 
@@ -422,12 +423,7 @@ export async function validateScheduleVersion({ festivalId, versionId }) {
   for (const [entryIndex, entry] of snapshot.entries()) {
     const start = new Date(entry.startTime);
     const end = new Date(entry.endTime);
-    if (
-      !Number.isFinite(start.getTime()) ||
-      !Number.isFinite(end.getTime()) ||
-      start < new Date(festival.startDate) ||
-      end > new Date(festival.endDate)
-    ) {
+    if (!isWithinFestivalDates(start, end, festival)) {
       throw new ScheduleValidationError(
         422,
         "Schedule times must be valid and fall within the festival dates.",

@@ -275,3 +275,7 @@ Configure production values for `MONGODB_URI`, `JWT_SECRET`, `JWT_EXPIRES_IN`, `
 ### Responsive workspace
 
 ![Mobile responsive workspace](<Screenshot_outputs/Responsive page.png>)
+
+## Demo video
+
+[Watch the Common Ground demo on YouTube](https://www.youtube.com/watch?v=h3Co1vbODkY)
